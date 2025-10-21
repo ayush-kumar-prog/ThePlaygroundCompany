@@ -1,0 +1,381 @@
+# CONTEXT: Building Playground Sim - Twitter Reaction Simulator
+
+I'm developing a web application called Playground Sim that simulates how Twitter/X audiences will react to ideas before launch. Users input their idea, select a target audience, choose tweet count (10-100), and receive AI-generated realistic reactions with sentiment analysis and PDF summaries.
+
+---
+
+## ATTACHED CONTEXT FILES:
+1. PROJECT_STATUS.md - Complete project architecture, current status, what's built, what's pending
+2. IMPLEMENTATION_GUIDE.md - Code examples, patterns, and implementation guidelines
+
+Please review these files carefully before responding.
+
+---
+
+## TECH STACK:
+- **Frontend**: Vite + React 18 + TypeScript + shadcn/ui + TailwindCSS + React Router + React Query
+- **Authentication**: Clerk (JWT-based, already integrated)
+- **Database**: Supabase (PostgreSQL with Row Level Security)
+- **API Layer**: Vercel Serverless Functions (Node.js)
+- **LLM**: OpenAI GPT-4 / GPT-4o
+- **Email**: Resend API
+- **PDF**: jsPDF (client-side generation)
+- **Hosting**: Vercel
+- **Domain**: playgroundsim.xyz (active)
+
+---
+
+## CURRENT STATUS SUMMARY:
+
+### ✅ FULLY COMPLETE & WORKING:
+
+**Environment & Configuration:**
+- All API keys configured in .env.local (Clerk, Supabase, OpenAI, Resend)
+- All npm packages installed and dependencies resolved
+- TypeScript types defined for all database tables
+- Supabase client initialized and configured
+- Clerk authentication fully integrated (ClerkProvider wrapping app)
+
+**Authentication (Clerk):**
+- Landing page with Sign In/Sign Up modals
+- Auto-redirect to /dashboard after authentication
+- UserButton for profile management
+- JWT token generation working
+- Redirect URLs configured
+
+**Database (Supabase):**
+- Schema designed and SQL file created (supabase-schema.sql)
+- Three tables: users, simulations, generated_tweets
+- Row Level Security (RLS) policies defined
+- Clerk JWT integration configured for RLS
+- Indexes created for performance
+- Foreign key relationships established
+
+**Frontend UI (100% complete):**
+- Landing page (/) - Beautiful animated design, Clerk auth buttons, auto-redirects
+- Dashboard (/dashboard) - Header with UserButton, "Create New Simulation" button, simulation dialog with idea textarea/audience dropdown/tweet count slider (10-100), previous simulations grid
+- Simulation page (/simulation/:id) - Displays idea, tweet cards grid, Edit & Rerun button, Download PDF button, Email PDF form
+- All pages styled with shadcn/ui components
+- Responsive layouts
+- Loading animations
+
+**API Structure:**
+- All endpoint files created in /api folder
+- Proper folder structure: /api/simulations, /api/llm, /api/pdf
+- TypeScript types from @vercel/node
+- All endpoints are currently stubs with TODO comments and placeholder responses
+
+**Routing:**
+- React Router configured with 3 routes
+- / (public landing)
+- /dashboard (user dashboard)
+- /simulation/:id (results view)
+
+### ⚠️ PENDING IMPLEMENTATION (What needs to be built):
+
+**Critical Path - API Endpoints:**
+1. **api/llm/generate-tweets.ts** ⭐ HIGHEST PRIORITY
+   - OpenAI API integration
+   - 2-pass generation strategy:
+     - Pass 1: Generate 70-80 initial tweet reactions (diverse personalities, sentiments, lengths)
+     - Pass 2: Select 5-8 controversial tweets, generate 2-3 threaded replies each
+   - Prompt engineering for realistic tweets (mix of short/medium/long, supporters/skeptics/confused, typos, emojis)
+   - Sentiment classification: "praise" | "neutral" | "worry"
+   - Parse JSON responses
+   - Batch insert tweets to Supabase generated_tweets table
+   - Update simulation status from "generating" to "completed"
+   - Error handling and retry logic
+
+2. **api/simulations/create.ts**
+   - Verify Clerk JWT token (need to install @clerk/backend)
+   - Extract user ID from JWT
+   - Ensure user exists in Supabase users table (create if not)
+   - Insert simulation record with status "generating"
+   - Trigger api/llm/generate-tweets asynchronously
+   - Return simulationId and status immediately
+
+3. **api/simulations/[id].ts**
+   - Verify JWT and extract user ID
+   - Fetch simulation by ID from Supabase
+   - Verify user owns this simulation (security check)
+   - Fetch all generated_tweets for this simulation (ordered by order_index)
+   - Return structured response with simulation metadata and tweets array
+
+4. **api/simulations/list.ts**
+   - Verify JWT, extract user ID
+   - Query Supabase for all user's simulations
+   - Order by created_at DESC
+   - Return array of simulations
+
+5. **api/simulations/rerun.ts**
+   - Verify JWT and ownership
+   - Update simulation.idea_text with new text
+   - Delete old tweets from generated_tweets table
+   - Set status back to "generating"
+   - Trigger LLM generation again
+   - Return updated simulation
+
+6. **api/pdf/email.ts**
+   - Verify JWT and ownership
+   - Fetch simulation + tweets
+   - Analyze tweets for top 6 praises (sentiment="praise")
+   - Analyze tweets for top 6 worries (sentiment="worry")
+   - Generate PDF with jsPDF or Puppeteer
+   - Send email via Resend with PDF attachment
+   - Return success response
+
+**Frontend Connections:**
+- Dashboard.tsx: Replace mock data with React Query hook fetching /api/simulations/list
+- Dashboard.tsx: Connect "Create Simulation" form to POST /api/simulations/create
+- Dashboard.tsx: Navigate to /simulation/:id after creation
+- Simulation.tsx: Fetch simulation from /api/simulations/:id with URL param
+- Simulation.tsx: Implement polling (refetchInterval every 2s while status="generating")
+- Simulation.tsx: Display tweets when status="completed"
+- Simulation.tsx: Connect Edit & Rerun to /api/simulations/rerun
+
+**Additional Features:**
+- PDF generation (client-side with jsPDF): Extract top 6 praises/worries, format nicely, include sentiment breakdown
+- Protected route wrapper component (redirect to / if not authenticated)
+- Loading states with cycling fun messages ("Waking up the reply guys...", "Generating hot takes...")
+- Error handling throughout (try-catch blocks, user-friendly error messages, toast notifications)
+- Tweet card component with Twitter-style design
+
+---
+
+## SYSTEM ARCHITECTURE & DATA FLOW:
+
+**User Journey:**
+1. User visits playgroundsim.xyz
+2. Clicks "New Simulation" → Clerk Sign Up modal
+3. Creates account → Auto-redirects to /dashboard
+4. Clicks "Create New Simulation" → Dialog opens
+5. Fills form: Idea text, selects "Tech Twitter", sets slider to 50 tweets
+6. Clicks "Simulate"
+7. Frontend calls POST /api/simulations/create
+8. API creates DB record (status: "generating"), returns simulationId
+9. Frontend navigates to /simulation/:simulationId
+10. Shows loading state with fun messages
+11. Frontend polls GET /api/simulations/:simulationId every 2 seconds
+12. Backend asynchronously: Calls OpenAI → Generates tweets → Saves to DB → Updates status to "completed"
+13. Frontend detects status change, stops polling, displays 50 tweets
+14. User can Edit & Rerun, Download PDF, or Email PDF
+
+**Database Schema:**
+```
+users
+- id (UUID, primary key)
+- clerk_id (TEXT, unique) ← Synced from Clerk
+- email (TEXT)
+- simulation_count (INT)
+- created_at (TIMESTAMP)
+
+simulations
+- id (UUID, primary key)
+- user_id (UUID, FK → users.id)
+- idea_text (TEXT)
+- audience (TEXT) ← "Tech Twitter", "Crypto Twitter", etc.
+- tweet_count (INT) ← 10-100
+- status (TEXT) ← "generating" | "completed" | "failed"
+- created_at (TIMESTAMP)
+- updated_at (TIMESTAMP)
+
+generated_tweets
+- id (UUID, primary key)
+- simulation_id (UUID, FK → simulations.id)
+- author_name (TEXT) ← "@fake_username"
+- tweet_text (TEXT)
+- sentiment (TEXT) ← "praise" | "neutral" | "worry"
+- is_reply (BOOLEAN)
+- reply_to_id (UUID, FK → generated_tweets.id)
+- order_index (INT) ← For sorting display
+- created_at (TIMESTAMP)
+```
+
+**Authentication Flow:**
+- Clerk manages auth UI, sessions, JWTs
+- Every API request includes Authorization: Bearer <jwt> header
+- API verifies JWT with @clerk/backend: clerkClient.verifyToken()
+- Extract user ID: verifiedToken.sub
+- Supabase RLS policies check: auth.jwt() ->> 'sub' matches user.clerk_id
+- This ensures users only see their own simulations
+
+**LLM Generation Strategy (Critical):**
+- User requests N tweets (e.g., 50)
+- Pass 1: Generate ~35 tweets (70%) as initial reactions
+  - Prompt includes: idea text, audience context, personality archetypes
+  - Archetypes: Hype person (15%), Skeptic (20%), Technical expert (20%), Encourager (15%), Confused (10%), Contrarian (10%), Thoughtful (10%)
+  - Length mix: Short 1-10 words (30%), Medium 1-2 sentences (50%), Detailed 3-4 sentences (20%)
+  - Authenticity: Occasional typos, casual language, varied emoji usage, some users misunderstood
+  - Output: JSON array with author, text, sentiment
+- Pass 2: Generate ~15 tweets (30%) as threaded replies
+  - Select 5-8 controversial tweets (neutral/worry sentiment)
+  - For each, generate 2-3 reply tweets
+  - Creates authentic back-and-forth conversations
+  - Output: JSON array with author, text, sentiment, reply_to info
+- Combine both passes, assign order_index
+- Batch insert all tweets to database
+- Update simulation status
+
+---
+
+## KEY TECHNICAL REQUIREMENTS:
+
+**Performance:**
+- Total generation time: 10-15 seconds target
+- OpenAI API calls should be parallel where possible (but Pass 2 depends on Pass 1 results)
+- Frontend polling interval: 2 seconds
+- Database queries optimized with indexes
+
+**Security:**
+- All API endpoints must verify Clerk JWT
+- Row Level Security (RLS) enforced on all Supabase tables
+- Users can only access their own simulations
+- Service role key only used in API endpoints (server-side)
+- Never expose service_role key to client
+
+**Error Handling:**
+- Try-catch blocks in all API endpoints
+- Failed simulations marked with status="failed"
+- User-friendly error messages (toast notifications)
+- Console logging for debugging
+- Graceful degradation
+
+**Data Quality:**
+- Tweets must feel authentic (not obviously AI-generated)
+- Diverse personalities and perspectives
+- Varied sentiment distribution (not all positive or all negative)
+- Realistic username formats (@lowercase_underscore)
+- Appropriate length for Twitter (up to 280 chars)
+
+---
+
+## ENVIRONMENT VARIABLES (Already Configured):
+
+```env
+# Clerk Authentication
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
+CLERK_SECRET_KEY=sk_test_...
+
+# Supabase Database
+VITE_SUPABASE_URL=https://txyerrwezxrtpqnllpxa.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGc... (anon public key)
+SUPABASE_SERVICE_KEY=eyJhbGc... (service_role key, server-side only)
+
+# OpenAI LLM
+OPENAI_API_KEY=sk-proj-...
+
+# Resend Email
+RESEND_API_KEY=re_...
+```
+
+Note: All configured locally in .env.local. Need to add to Vercel dashboard for production.
+
+---
+
+## PROJECT FILE STRUCTURE:
+
+```
+/ThePlaygroundCompany
+├── api/
+│   ├── simulations/
+│   │   ├── create.ts         [STUB - Priority 2]
+│   │   ├── [id].ts           [STUB - Priority 3]
+│   │   ├── list.ts           [STUB - Priority 4]
+│   │   └── rerun.ts          [STUB - Priority 5]
+│   ├── llm/
+│   │   └── generate-tweets.ts [STUB - Priority 1 ⭐]
+│   └── pdf/
+│       └── email.ts          [STUB - Priority 6]
+├── src/
+│   ├── lib/
+│   │   ├── clerk.ts          [COMPLETE]
+│   │   ├── supabase.ts       [COMPLETE - client + types]
+│   │   └── api.ts            [COMPLETE - client functions]
+│   ├── pages/
+│   │   ├── Index.tsx         [COMPLETE - needs no changes]
+│   │   ├── Dashboard.tsx     [UI COMPLETE - needs React Query connection]
+│   │   └── Simulation.tsx    [UI COMPLETE - needs API connection + polling]
+│   ├── components/
+│   │   └── ui/               [COMPLETE - shadcn components]
+│   ├── main.tsx              [COMPLETE - ClerkProvider setup]
+│   └── App.tsx               [COMPLETE - routes configured]
+├── .env.local                [COMPLETE - all keys configured]
+├── supabase-schema.sql       [COMPLETE - ready to run]
+├── package.json              [COMPLETE - all deps installed]
+├── PROJECT_STATUS.md         [THIS FILE ATTACHED]
+└── IMPLEMENTATION_GUIDE.md   [CODE EXAMPLES ATTACHED]
+```
+
+---
+
+## WHAT I NEED HELP WITH:
+
+[👉 REPLACE THIS SECTION WITH YOUR SPECIFIC QUESTION 👈]
+
+Examples:
+- "Implement api/llm/generate-tweets.ts with complete working code"
+- "Connect Dashboard.tsx to the create simulation API with React Query"
+- "Set up polling in Simulation.tsx for status updates"
+- "Implement PDF generation with top 6 praises and worries"
+- "Help me debug this error: [error message]"
+- "Review my implementation of [file] and suggest improvements"
+
+---
+
+## INSTRUCTIONS FOR YOUR RESPONSE:
+
+When providing solutions:
+
+1. **Read Context First**: Carefully review PROJECT_STATUS.md and IMPLEMENTATION_GUIDE.md
+2. **Complete Code**: Provide full, working implementations (not pseudocode or snippets)
+3. **TypeScript**: Use proper TypeScript types, no 'any' unless necessary
+4. **Error Handling**: Include try-catch blocks and proper error responses
+5. **Follow Patterns**: Match the coding style and patterns from IMPLEMENTATION_GUIDE.md
+6. **Security**: Verify JWT tokens, check ownership, use service_role key server-side only
+7. **Comments**: Add brief comments explaining complex logic
+8. **Testing**: Mention how to test the implementation
+9. **Edge Cases**: Consider and handle edge cases
+10. **Dependencies**: Note if any additional packages need to be installed
+
+Preferred response format:
+- Explain the approach briefly (1-2 paragraphs)
+- Provide complete code with filename
+- Explain key parts of the implementation
+- Note any additional steps needed (install packages, update env vars, etc.)
+- Provide testing instructions
+
+---
+
+## ADDITIONAL CONTEXT:
+
+**Development Environment:**
+- OS: macOS
+- Project path: /Users/kumar/Documents/Projects/ThePlaygroundCompany
+- Dev server: `npm run dev` (runs on localhost:8080)
+- Deployment: Vercel (auto-deploys on git push)
+
+**Current Phase:**
+We're past configuration (100% complete) and ready for business logic implementation. The skeleton is fully built, all integrations are configured, and we need to implement the core functionality.
+
+**Priority Order:**
+1. LLM tweet generation (the core value prop)
+2. Create simulation endpoint
+3. Get simulation endpoint + frontend connection
+4. List simulations + dashboard connection
+5. Rerun functionality
+6. PDF and email features
+
+**Time Constraints:**
+This is for a hackathon, so implementation needs to be efficient. Prefer simpler, working solutions over complex optimization.
+
+**Testing Strategy:**
+- Local testing with `npm run dev`
+- Manual testing of user flow
+- Check Vercel logs for serverless function errors
+- Check Supabase logs for database errors
+- Use console.log for debugging
+
+---
+
+Please help me with the specific task mentioned above. Provide complete, production-ready code that I can implement immediately.
+

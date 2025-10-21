@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { ArrowLeft, Download, Edit, Sparkles } from "lucide-react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { ArrowLeft, Download, Edit, Sparkles, Loader2 } from "lucide-react";
+import { useNavigate, useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@clerk/clerk-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,58 +12,161 @@ import { toast } from "sonner";
 
 export default function Simulation() {
   const navigate = useNavigate();
-  const location = useLocation();
-  const { idea, audience } = location.state || {};
+  const { id } = useParams<{ id: string }>();
+  const { getToken } = useAuth();
   
-  const [isSimulating, setIsSimulating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [editedIdea, setEditedIdea] = useState(idea || "");
-  const [simulatedTweets, setSimulatedTweets] = useState<any[]>([]);
+  const [editedIdea, setEditedIdea] = useState("");
 
-  const generateSimulation = (ideaText: string) => {
-    setIsSimulating(true);
-    setSimulatedTweets([]);
-    
-    // Simulate API delay
-    setTimeout(() => {
-      const mockResponses = [
-        { username: "tech_enthusiast", text: `This is exactly what ${audience} needs! The potential here is huge 🚀`, sentiment: "positive" as const },
-        { username: "skeptic_dev", text: "Interesting concept, but how would this scale? Need more details on the implementation.", sentiment: "neutral" as const },
-        { username: "early_adopter", text: "Already love this idea! When can we start testing? Would be happy to provide feedback.", sentiment: "positive" as const },
-        { username: "industry_expert", text: "I've seen similar attempts before. What makes this different from existing solutions?", sentiment: "neutral" as const },
-        { username: "innovation_fan", text: "This could disrupt the entire space! The timing couldn't be better for something like this 🔥", sentiment: "positive" as const },
-        { username: "concerned_user", text: "Not sure about this approach. Have you considered the privacy implications?", sentiment: "negative" as const },
-        { username: "product_hunter", text: "Love the simplicity! This solves a real pain point I've been dealing with.", sentiment: "positive" as const },
-        { username: "casual_observer", text: "Can someone explain what problem this actually solves? Genuinely curious.", sentiment: "neutral" as const },
-      ];
-      
-      setSimulatedTweets(mockResponses);
-      setIsSimulating(false);
-      toast.success("Simulation complete!");
-    }, 2000);
-  };
+  // Fetch simulation with polling while status is "generating"
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['simulation', id],
+    queryFn: async () => {
+      const token = await getToken();
+      const response = await fetch(`/api/simulations/${id}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
 
-  const handleRerun = () => {
-    if (editedIdea.trim()) {
-      generateSimulation(editedIdea);
+      if (!response.ok) {
+        throw new Error('Failed to fetch simulation');
+      }
+
+      return response.json();
+    },
+    enabled: !!id,
+    refetchInterval: (data) => {
+      // Poll every 2 seconds while generating
+      return data?.simulation?.status === 'generating' ? 2000 : false;
+    },
+    retry: 1,
+  });
+
+  const simulation = data?.simulation;
+  const tweets = data?.tweets || [];
+
+  // Update editedIdea when simulation loads
+  if (simulation && !editedIdea) {
+    setEditedIdea(simulation.ideaText);
+  }
+
+  const handleRerun = async () => {
+    if (!editedIdea.trim()) {
+      toast.error("Please enter your idea");
+      return;
+    }
+
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/simulations/rerun', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          simulationId: id,
+          newIdeaText: editedIdea
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to rerun simulation');
+      }
+
       setIsEditing(false);
       toast.success("Rerunning simulation with updated idea");
+      
+      // The query will automatically start polling again since status will be "generating"
+    } catch (error) {
+      toast.error("Failed to rerun simulation");
+      console.error('Rerun error:', error);
     }
   };
 
   const handleDownload = () => {
-    // Mock PDF download
-    toast.success("Summary downloaded! Check your downloads folder.");
+    if (!simulation || tweets.length === 0) {
+      toast.error("No tweets to download yet");
+      return;
+    }
+
+    try {
+      // Simple text-based download for now
+      // TODO: Implement proper PDF generation in Phase 4
+      const praises = tweets.filter((t: any) => t.sentiment === 'praise').slice(0, 6);
+      const worries = tweets.filter((t: any) => t.sentiment === 'worry').slice(0, 6);
+      
+      let content = `Simulation Results\n\n`;
+      content += `Idea: ${simulation.ideaText}\n`;
+      content += `Audience: ${simulation.audience}\n`;
+      content += `Total Tweets: ${tweets.length}\n\n`;
+      content += `--- TOP PRAISES ---\n`;
+      praises.forEach((t: any, i: number) => {
+        content += `${i + 1}. ${t.author}: ${t.text}\n\n`;
+      });
+      content += `\n--- TOP CONCERNS ---\n`;
+      worries.forEach((t: any, i: number) => {
+        content += `${i + 1}. ${t.author}: ${t.text}\n\n`;
+      });
+
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `simulation-${id}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      toast.success("Summary downloaded!");
+    } catch (error) {
+      toast.error("Failed to download summary");
+      console.error('Download error:', error);
+    }
   };
 
-  if (!idea) {
-    navigate("/");
-    return null;
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background relative flex items-center justify-center">
+        <BackgroundTweets />
+        <div className="relative z-10 text-center">
+          <Loader2 className="w-12 h-12 text-primary mx-auto mb-4 animate-spin" />
+          <p className="text-muted-foreground">Loading simulation...</p>
+        </div>
+      </div>
+    );
   }
 
-  if (simulatedTweets.length === 0 && !isSimulating) {
-    generateSimulation(idea);
+  // Error state
+  if (error || !simulation) {
+    return (
+      <div className="min-h-screen bg-background relative flex items-center justify-center">
+        <BackgroundTweets />
+        <div className="relative z-10 text-center max-w-md">
+          <p className="text-destructive mb-4">Failed to load simulation</p>
+          <Button onClick={() => navigate('/dashboard')}>
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            Back to Dashboard
+          </Button>
+        </div>
+      </div>
+    );
   }
+
+  const isGenerating = simulation.status === 'generating';
+  const hasFailed = simulation.status === 'failed';
+
+  // Fun loading messages
+  const loadingMessages = [
+    "Waking up the reply guys...",
+    "Generating hot takes...",
+    "Summoning tech Twitter...",
+    "Consulting the hive mind...",
+    "Brewing controversial opinions...",
+    "Deploying virtual skeptics...",
+  ];
+  const randomMessage = loadingMessages[Math.floor(Math.random() * loadingMessages.length)];
 
   return (
     <div className="min-h-screen bg-background relative">
@@ -71,11 +176,11 @@ export default function Simulation() {
         <div className="container mx-auto px-4 py-8">
           <Button
             variant="ghost"
-            onClick={() => navigate("/")}
+            onClick={() => navigate('/dashboard')}
             className="mb-6"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
+            Back to Dashboard
           </Button>
 
           <div className="max-w-4xl mx-auto">
@@ -84,7 +189,7 @@ export default function Simulation() {
                 Simulation Results
               </h1>
               <p className="text-muted-foreground">
-                Audience: <span className="text-accent font-semibold">{audience}</span>
+                Audience: <span className="text-accent font-semibold">{simulation.audience}</span>
               </p>
             </div>
 
@@ -106,7 +211,7 @@ export default function Simulation() {
                     <p className="text-foreground">{editedIdea}</p>
                   )}
                 </div>
-                {!isEditing && (
+                {!isEditing && !isGenerating && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -120,13 +225,14 @@ export default function Simulation() {
               {isEditing && (
                 <div className="flex gap-2 mt-4">
                   <Button onClick={handleRerun} className="flex-1">
+                    <Sparkles className="w-4 h-4 mr-2" />
                     Rerun Simulation
                   </Button>
                   <Button
                     variant="outline"
                     onClick={() => {
                       setIsEditing(false);
-                      setEditedIdea(idea);
+                      setEditedIdea(simulation.ideaText);
                     }}
                   >
                     Cancel
@@ -135,25 +241,47 @@ export default function Simulation() {
               )}
             </Card>
 
-            {isSimulating ? (
+            {hasFailed && (
+              <Card className="p-8 text-center bg-destructive/10 border-destructive/50 mb-6">
+                <p className="text-destructive font-semibold mb-2">Generation Failed</p>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Something went wrong. Please try editing and rerunning the simulation.
+                </p>
+                <Button variant="outline" onClick={() => setIsEditing(true)}>
+                  <Edit className="w-4 h-4 mr-2" />
+                  Edit & Retry
+                </Button>
+              </Card>
+            )}
+
+            {isGenerating ? (
               <div className="text-center py-12">
                 <div className="inline-block animate-pulse-glow">
                   <Sparkles className="w-12 h-12 text-primary mx-auto mb-4" />
                 </div>
-                <p className="text-lg text-muted-foreground">Simulating reactions...</p>
+                <p className="text-lg text-muted-foreground mb-2">{randomMessage}</p>
+                <p className="text-sm text-muted-foreground">This usually takes 10-15 seconds</p>
               </div>
-            ) : (
+            ) : tweets.length > 0 ? (
               <>
                 <div className="space-y-4 mb-6">
-                  {simulatedTweets.map((tweet, i) => (
-                    <SimulationCard
-                      key={i}
-                      username={tweet.username}
-                      text={tweet.text}
-                      sentiment={tweet.sentiment}
-                      delay={i * 0.1}
-                    />
-                  ))}
+                  {tweets.map((tweet: any, i: number) => {
+                    // Map API sentiment to component sentiment
+                    const mappedSentiment = 
+                      tweet.sentiment === 'praise' ? 'positive' :
+                      tweet.sentiment === 'worry' ? 'negative' :
+                      'neutral';
+                    
+                    return (
+                      <SimulationCard
+                        key={tweet.id}
+                        username={tweet.author}
+                        text={tweet.text}
+                        sentiment={mappedSentiment as "positive" | "negative" | "neutral"}
+                        delay={i * 0.05}
+                      />
+                    );
+                  })}
                 </div>
 
                 <div className="text-center animate-fade-in-delay">
@@ -162,10 +290,14 @@ export default function Simulation() {
                     Download Summary
                   </Button>
                   <p className="text-xs text-muted-foreground mt-2">
-                    Includes top 3 praises and concerns
+                    Includes top 6 praises and top 6 concerns
                   </p>
                 </div>
               </>
+            ) : (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">No tweets generated yet</p>
+              </div>
             )}
           </div>
         </div>
