@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { generateTweetsForSimulation } from './lib/generate-tweets-logic.js';
+import { generateTweetsForSimulation } from '../lib/generate-tweets-logic.js';
 // TEMPORARY: Clerk JWT verification disabled for MVP
 // TODO: Fix @clerk/backend import and JWT verification
 
