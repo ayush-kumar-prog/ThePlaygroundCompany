@@ -98,9 +98,12 @@ export default async function handler(
       .eq('id', user!.id);
 
     // Trigger LLM generation asynchronously (fire and forget)
-    const generateUrl = process.env.VERCEL_URL 
-      ? `https://${process.env.VERCEL_URL}/api/llm/generate-tweets`
-      : 'http://localhost:8080/api/llm/generate-tweets';
+    // Use the current request URL to determine the base URL
+    const protocol = req.headers['x-forwarded-proto'] || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host || process.env.VERCEL_URL;
+    const generateUrl = `${protocol}://${host}/api/llm/generate-tweets`;
+
+    console.log(`[${simulation.id}] Triggering LLM generation at: ${generateUrl}`);
 
     fetch(generateUrl, {
       method: 'POST',
@@ -111,13 +114,19 @@ export default async function handler(
         audience,
         tweetCount
       })
-    }).catch(err => {
-      console.error(`Failed to trigger LLM generation for ${simulation.id}:`, err);
-      // Don't throw - let the simulation stay in "generating" state
-      // User can retry or we can implement a cleanup job later
+    })
+    .then(res => {
+      console.log(`[${simulation.id}] LLM trigger response status: ${res.status}`);
+      return res.text();
+    })
+    .then(text => {
+      console.log(`[${simulation.id}] LLM trigger response: ${text}`);
+    })
+    .catch(err => {
+      console.error(`[${simulation.id}] Failed to trigger LLM generation:`, err);
     });
 
-    console.log(`Triggered LLM generation for simulation ${simulation.id}`);
+    console.log(`[${simulation.id}] LLM generation request sent`);
 
     res.status(200).json({
       simulationId: simulation.id,
