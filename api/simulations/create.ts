@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+import { generateTweetsForSimulation } from './lib/generate-tweets-logic';
 // TEMPORARY: Clerk JWT verification disabled for MVP
 // TODO: Fix @clerk/backend import and JWT verification
 
@@ -97,36 +98,20 @@ export default async function handler(
       .update({ simulation_count: (user!.simulation_count || 0) + 1 })
       .eq('id', user!.id);
 
-    // Trigger LLM generation asynchronously (fire and forget)
-    // Use the current request URL to determine the base URL
-    const protocol = req.headers['x-forwarded-proto'] || 'https';
-    const host = req.headers['x-forwarded-host'] || req.headers.host || process.env.VERCEL_URL;
-    const generateUrl = `${protocol}://${host}/api/llm/generate-tweets`;
-
-    console.log(`[${simulation.id}] Triggering LLM generation at: ${generateUrl}`);
-
-    fetch(generateUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        simulationId: simulation.id,
-        ideaText,
-        audience,
-        tweetCount
-      })
-    })
-    .then(res => {
-      console.log(`[${simulation.id}] LLM trigger response status: ${res.status}`);
-      return res.text();
-    })
-    .then(text => {
-      console.log(`[${simulation.id}] LLM trigger response: ${text}`);
-    })
-    .catch(err => {
-      console.error(`[${simulation.id}] Failed to trigger LLM generation:`, err);
+    // Trigger LLM generation directly (fire and forget)
+    console.log(`[${simulation.id}] 🚀 Triggering LLM generation directly...`);
+    
+    // Call generation function without awaiting (background processing)
+    generateTweetsForSimulation(
+      simulation.id,
+      ideaText,
+      audience,
+      tweetCount
+    ).catch(err => {
+      console.error(`[${simulation.id}] ❌ Background generation failed:`, err);
     });
 
-    console.log(`[${simulation.id}] LLM generation request sent`);
+    console.log(`[${simulation.id}] ✅ Generation started in background`);
 
     res.status(200).json({
       simulationId: simulation.id,
