@@ -99,12 +99,15 @@ export default async function handler(
     console.error(`[${simulationId}] ❌ Error generating tweets:`, error);
     
     // Update simulation status to failed
-    await supabase
-      .from('simulations')
-      .update({ status: 'failed' })
-      .eq('id', simulationId)
-      .then(() => console.log(`[${simulationId}] Marked as failed`))
-      .catch(err => console.error(`[${simulationId}] Failed to update status:`, err));
+    try {
+      await supabase
+        .from('simulations')
+        .update({ status: 'failed' })
+        .eq('id', simulationId);
+      console.log(`[${simulationId}] Marked as failed`);
+    } catch (err) {
+      console.error(`[${simulationId}] Failed to update status:`, err);
+    }
     
     res.status(500).json({ 
       error: 'Failed to generate tweets',
