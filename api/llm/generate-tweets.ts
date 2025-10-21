@@ -40,20 +40,11 @@ export default async function handler(
   try {
     console.log(`[${simulationId}] Starting tweet generation for ${tweetCount} tweets`);
 
-    // PASS 1: Generate initial reactions (70% of total tweets)
-    const initialCount = Math.floor(tweetCount * 0.7);
-    const initialTweets = await generateInitialTweets(ideaText, audience, initialCount);
+    // SIMPLIFIED: Single pass generation for speed (Vercel timeout workaround)
+    // TODO: Re-enable 2-pass generation when we upgrade to paid Vercel plan
+    const allTweets = await generateInitialTweets(ideaText, audience, tweetCount);
     
-    console.log(`[${simulationId}] Generated ${initialTweets.length} initial tweets`);
-
-    // PASS 2: Generate threaded replies (30% of total tweets)
-    const replyCount = tweetCount - initialTweets.length;
-    const replyTweets = await generateReplyTweets(initialTweets, ideaText, replyCount);
-    
-    console.log(`[${simulationId}] Generated ${replyTweets.length} reply tweets`);
-
-    // Combine all tweets
-    const allTweets = [...initialTweets, ...replyTweets];
+    console.log(`[${simulationId}] Generated ${allTweets.length} tweets`);
 
     // Format for database insertion
     const tweetsToInsert = allTweets.map((tweet, index) => ({
@@ -128,15 +119,15 @@ async function generateInitialTweets(
   const systemPrompt = buildSystemPrompt(audience, count);
   const userPrompt = `Simulate Twitter reactions to this idea:\n\n"${ideaText}"\n\nGenerate exactly ${count} diverse, realistic tweets.`;
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o',
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
-    temperature: 0.9, // High creativity for diverse responses
-    response_format: { type: 'json_object' }
-  });
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini', // Faster and cheaper for MVP
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.9, // High creativity for diverse responses
+      response_format: { type: 'json_object' }
+    });
 
   const response = completion.choices[0].message.content;
   if (!response) {
@@ -192,15 +183,15 @@ Return JSON format:
 }`;
 
     try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: 'You generate realistic Twitter reply threads. Keep replies concise and authentic.' },
-          { role: 'user', content: replyPrompt }
-        ],
-        temperature: 0.9,
-        response_format: { type: 'json_object' }
-      });
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini', // Faster for reply generation
+      messages: [
+        { role: 'system', content: 'You generate realistic Twitter reply threads. Keep replies concise and authentic.' },
+        { role: 'user', content: replyPrompt }
+      ],
+      temperature: 0.9,
+      response_format: { type: 'json_object' }
+    });
 
       const response = completion.choices[0].message.content;
       if (response) {

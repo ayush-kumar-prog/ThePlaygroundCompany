@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "api/llm/generate-tweets.ts": {
+      "maxDuration": 60
+    }
+  }
+}
+
