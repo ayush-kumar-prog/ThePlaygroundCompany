@@ -52,8 +52,8 @@ export default async function handler(
       author_name: tweet.author,
       tweet_text: tweet.text,
       sentiment: tweet.sentiment,
-      is_reply: index >= initialTweets.length,
-      reply_to_id: null, // Could enhance later to link properly
+      is_reply: false, // Single pass generation - no replies for now
+      reply_to_id: null,
       order_index: index,
     }));
 
